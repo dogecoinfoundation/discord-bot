@@ -126,7 +126,7 @@ func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 }
 
 func addApprovedUser(user *discordgo.User) {
-	addToAirtable(user.Mention(), user.Username+" agreed to the CLA by reacting with 👍") // TODO: include some kind of message ID/link.
+	addToAirtable(user.String(), user.Username+" agreed to the CLA by reacting with 👍") // TODO: include some kind of message ID/link.
 }
 
 func addToAirtable(name string, notes string) {
