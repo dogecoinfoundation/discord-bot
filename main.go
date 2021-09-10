@@ -10,25 +10,27 @@ import (
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/mehanizm/airtable"
 )
 
 var (
-	Token   string
-	dg      *discordgo.Session
+	dg    *discordgo.Session
+	shibe *discordgo.Role
+	table *airtable.Table
 
-	shibe   *discordgo.Role
+	c = getCfg()
 
 	msgIDToUser = make(map[string]*discordgo.User, 100)
-
-	approvedUsers = make([]*discordgo.User, 0, 1000) //  TODO: replace with Airtable
-	c = getCfg()
+	// approvedUsers = make([]*discordgo.User, 0, 1000) //  TODO: replace with Airtable
 )
 
 type config struct {
-	Token string
+	Token          string
 	TargetRoleName string
-	ServerID string
-	ChannelID string
+	ServerID       string
+	ChannelID      string
+	AirtableKey    string
+	AirtableBaseID string
 }
 
 func getCfg() *config {
@@ -56,7 +58,7 @@ func main() {
 	}
 	dg.AddHandler(memberAdd)
 	dg.AddHandler(msgReact)
-	dg.Identify.Intents = discordgo.IntentsAll
+	dg.Identify.Intents = discordgo.IntentsGuildMessageReactions | discordgo.IntentsGuildMembers
 
 	err = setup()
 	if err != nil {
@@ -90,15 +92,18 @@ func setup() error {
 		}
 	}
 	if shibe == nil {
-		return errors.New("no '"+c.TargetRoleName+"' role detected, you should add one")
+		return errors.New("no '" + c.TargetRoleName + "' role detected, you should add one")
 	}
 	fmt.Println("Found the role!")
+
+	client := airtable.NewClient(c.AirtableKey)
+	table = client.GetTable(c.AirtableBaseID, "Table 1")
 	return nil
 }
 
 func memberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
 	fmt.Println(m.User.Username)
-	msg, err := s.ChannelMessageSend(c.ChannelID, m.Member.Mention()+" has just joined my list of subjects! React with 👍 to accept the legal stuff, "+ m.Member.Mention()+". Much love, KS 3")
+	msg, err := s.ChannelMessageSend(c.ChannelID, m.Member.Mention()+" has just joined my list of subjects! React with 👍 to accept the legal stuff, "+m.Member.Mention()+".\nMuch love, KS 3") // TODO: add some randomness to this message for personality.
 	if err != nil {
 		fmt.Println("error:", err)
 	}
@@ -107,11 +112,11 @@ func memberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
 
 func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 	if user, ok := msgIDToUser[m.MessageID]; ok {
-		if m.UserID == user.ID && (m.Emoji.Name == "👍"){
+		if m.UserID == user.ID && (m.Emoji.Name == "👍") {
 			addApprovedUser(user)
 			err := s.GuildMemberRoleAdd(c.ServerID, user.ID, shibe.ID)
 			if err != nil {
-				_, err = s.ChannelMessageSend(c.ChannelID, "OH NOOOOO i got an error: " + err.Error() + "\n Kindly slap Ishan")
+				_, err = s.ChannelMessageSend(c.ChannelID, "OH NOOOOO i got an error: "+err.Error()+"\n Kindly send a stern message to Ishan#9106")
 				if err != nil {
 					fmt.Println("Couldn't send a message. error: ", err)
 				}
@@ -121,6 +126,28 @@ func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 }
 
 func addApprovedUser(user *discordgo.User) {
-	approvedUsers = append(approvedUsers, user)
-	fmt.Println("added a new person. approved people are", approvedUsers)
+	addToAirtable(user.Mention(), user.Username+" agreed to the CLA by reacting with 👍") // TODO: include some kind of message ID/link.
+}
+
+func addToAirtable(name string, notes string) {
+	recordsToSend := &airtable.Records{
+		Records: []*airtable.Record{
+			{
+				Fields: map[string]interface{}{
+					"Name":  name,
+					"Notes": notes,
+				},
+			},
+		},
+	}
+	records, err := table.AddRecords(recordsToSend)
+	if err != nil {
+		fmt.Println("error: ", err)
+		return
+	}
+	j, err := json.MarshalIndent(records, "", "   ")
+	if err != nil {
+		fmt.Println("error: ", err)
+	}
+	fmt.Println("Sent these records to Airtable:", string(j))
 }

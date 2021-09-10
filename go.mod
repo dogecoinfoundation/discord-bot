@@ -2,7 +2,10 @@ module doge-cla
 
 go 1.17
 
-require github.com/bwmarrin/discordgo v0.23.2
+require (
+	github.com/bwmarrin/discordgo v0.23.2
+	github.com/mehanizm/airtable v0.2.5
+)
 
 require (
 	github.com/gorilla/websocket v1.4.0 // indirect
