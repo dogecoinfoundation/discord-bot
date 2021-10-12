@@ -130,7 +130,7 @@ func pickRandom(a []string) string {
 func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 	if user, ok := msgIDToUser[m.MessageID]; ok {
 		if m.UserID == user.ID && (m.Emoji.Name == "👍") {
-			addApprovedUser(user)
+			addApprovedUser(user, messageToLink(m))
 			_, err := s.ChannelMessageSend(c.ChannelID, "Wow, thanks for your acceptance, "+user.Mention()+". I'm adding the Shibe role yahoo!")
 			if err != nil {
 				fmt.Println("Couldn't send a message. error: ", err)
@@ -146,8 +146,12 @@ func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 	}
 }
 
-func addApprovedUser(user *discordgo.User) {
-	addToAirtable(user.String(), user.Username+" agreed to the CLA by reacting with 👍") // TODO: include some kind of message ID/link.
+func messageToLink(m *discordgo.MessageReactionAdd) string {
+	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", m.GuildID, m.ChannelID, m.MessageID)
+}
+
+func addApprovedUser(user *discordgo.User, messageLink string) {
+	addToAirtable(user.String(), "Discord: Agreed to the CLA by reacting with 👍 here: "+messageLink) // TODO: include some kind of message ID/link.
 }
 
 func addToAirtable(name string, notes string) {
