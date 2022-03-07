@@ -177,6 +177,8 @@ func pickRandom(a []string) string {
 }
 
 func msgReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
+	// could be replaced with an airtable-exists check but this could be faster and cause less airtable requests
+	// has the side effect of not persisting the list of people left to react to the message
 	if user, ok := msgIDToUser[m.MessageID]; ok {
 		delete(msgIDToUser, m.MessageID)
 		if m.UserID == user.ID && (m.Emoji.Name == "👍") {
@@ -205,7 +207,10 @@ func addApprovedDiscordUser(user *discordgo.User, messageLink string) {
 }
 
 func addToAirtable(name string, notes string) {
-	exists, _ := doesRecordExist(name)
+	exists, err := doesRecordExist(name)
+	if err != nil {
+		fmt.Println("error checking if record exists already:", err)
+	}
 	if exists {
 		return
 	}
@@ -232,13 +237,16 @@ func addToAirtable(name string, notes string) {
 }
 
 func doesRecordExist(name string) (bool, error) {
+	fmt.Println("Checking if record exists for:", name)
 	checkExistsURLValues := url.Values{}
-	checkExistsURLValues.Add("fields", "Name")
-	checkExistsURLValues.Add("filterByFormula", fmt.Sprintf("{Name = %s}", name))
+	//checkExistsURLValues.Add("fields", "Name") // not necessary + airtable really doesn't like me picking only a single field for some reason
+	// This change made it work and so I said this: https://github.com/quackduck/test-gh-go-bot/pull/17#issuecomment-1061226233
+	checkExistsURLValues.Add("filterByFormula", fmt.Sprintf("{Name} = '%s'", name))
 	records, err := table.GetRecordsWithParams(checkExistsURLValues)
 	if err != nil {
 		return false, err
 	}
+	fmt.Println("records found for", name, ToJSON(records))
 	if len(records.Records) > 0 { // there are duplicates
 		return true, nil
 	}
@@ -265,12 +273,12 @@ func Handle(response http.ResponseWriter, request *http.Request) {
 
 	switch payload := payload.(type) {
 	case ghwebhooks.PullRequestPayload:
-		fmt.Println("received pull request event")
-		if payload.Action != "created" {
+		fmt.Println("received pull request event, payload action & URL:", payload.Action, payload.PullRequest.HTMLURL)
+		if payload.Action != "created" { // created is just a comment on the PR for some reason
 			go PREvent(&payload)
 		}
 	case ghwebhooks.IssueCommentPayload:
-		fmt.Println("received pull request comment")
+		fmt.Println("received pull request comment, payload action & URL:", payload.Action, payload.Comment.HTMLURL)
 		go PRCommentEvent(&payload)
 	default:
 		fmt.Println("missing handler for event", payload)
@@ -282,9 +290,14 @@ func GetV3Client() *v3.Client {
 	return v3.NewClient(&http.Client{Transport: itr})
 }
 
-func PREvent(p *ghwebhooks.PullRequestPayload) { // TODO: check if user already registered
-	fmt.Println(ToJSON(p))
-	if exists, _ := doesRecordExist(p.Sender.Login); exists {
+func PREvent(p *ghwebhooks.PullRequestPayload) {
+	fmt.Println("New PR", p.PullRequest.HTMLURL)
+	exists, err := doesRecordExist(p.Sender.Login)
+	if err != nil {
+		fmt.Println("error checking if record exists already:", err)
+		return
+	}
+	if exists {
 		return
 	}
 	msg := "Hello @" + p.Sender.Login + "!\n\n" +
@@ -306,16 +319,25 @@ func PREvent(p *ghwebhooks.PullRequestPayload) { // TODO: check if user already 
 	if err != nil {
 		fmt.Printf("making comment error: %v\n", err)
 	}
-	fmt.Println(ToJSON(P))
+	fmt.Println("Made comment: ", *P.HTMLURL)
 }
 
 func PRCommentEvent(p *ghwebhooks.IssueCommentPayload) {
+	fmt.Println("Got PR comment event", p.Issue.HTMLURL)
 	if p.Sender.Login == ghBotSlug+"[bot]" { // don't respond to self
 		return
 	}
-	fmt.Println(ToJSON(p))
+
 	if p.Comment.Body == "👍" && p.Sender.Login == p.Issue.User.Login {
-		addApprovedGHUser(p.Sender.Login, p.Comment.URL)
+		exists, err := doesRecordExist(p.Sender.Login)
+		if err != nil {
+			fmt.Println("error checking if record exists already:", err)
+			return
+		}
+		if exists {
+			return
+		}
+		addApprovedGHUser(p.Sender.Login, p.Comment.HTMLURL)
 		msg := "You have now accepted the CLA! @" + p.Sender.Login + " is now a shibe!"
 		t := time.Now()
 		reply, _, err := GetV3Client().Issues.CreateComment( // pr replies are sent through the issues api for some reason
@@ -333,7 +355,7 @@ func PRCommentEvent(p *ghwebhooks.IssueCommentPayload) {
 		if err != nil {
 			fmt.Printf("making comment returned error: %v\n", err)
 		}
-		fmt.Println(ToJSON(reply))
+		fmt.Println("Made reply: ", *reply.HTMLURL)
 	}
 }
 
